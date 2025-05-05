@@ -10,6 +10,7 @@ http://openaccess.thecvf.com/content_ICCV_2017_workshops/papers/w14/Zhou_CAD_Sca
 import warnings
 import numpy as np
 from numba import jit
+from math import exp, sqrt
 
 
 @jit(nopython=True)
@@ -31,6 +32,14 @@ def bb_intersection_over_union(A, B):
 
     iou = interArea / float(boxAArea + boxBArea - interArea)
     return iou
+
+def bb_normalized_wasserstien_distance(A, B):
+    cx1, cy1, cx2, cy2 = (A[0]+A[2])/2, (A[1]+A[3])/2, (B[0]+B[2])/2, (B[1]+B[3])/2
+    w1, h1, w2, h2 = A[2]-A[0], A[3]-A[1], B[2]-B[0], B[3]-B[1]
+    center_distance = np.power(cx1-cx2, 2) + np.power(cy1-cy2, 2) + 1e-7
+    wh_distance = ((w1-w2)**2 + (h1-h2)**2) / 4
+
+    return exp(-sqrt(center_distance+wh_distance)/12.8*2000)
 
 
 def prefilter_boxes(boxes, scores, labels, weights, thr):
@@ -128,14 +137,17 @@ def get_weighted_box(boxes):
     return box
 
 
-def find_matching_box(boxes_list, new_box, match_iou):
+def find_matching_box(boxes_list, new_box, match_iou, nwd):
     best_iou = match_iou
     best_index = -1
     for i in range(len(boxes_list)):
         box = boxes_list[i]
         if box[0] != new_box[0]:
             continue
-        iou = bb_intersection_over_union(box[2:], new_box[2:])
+        if not nwd:
+            iou = bb_intersection_over_union(box[2:], new_box[2:])
+        else:
+            iou = bb_normalized_wasserstien_distance(box[2:], new_box[2:])
         if iou > best_iou:
             best_index = i
             best_iou = iou
@@ -143,7 +155,7 @@ def find_matching_box(boxes_list, new_box, match_iou):
     return best_index, best_iou
 
 
-def non_maximum_weighted(boxes_list, scores_list, labels_list, weights=None, iou_thr=0.55, skip_box_thr=0.0):
+def non_maximum_weighted(boxes_list, scores_list, labels_list, weights=None, iou_thr=0.55, skip_box_thr=0.0, nwd=False):
     '''
     :param boxes_list: list of boxes predictions from each model, each box is 4 numbers. 
     It has 3 dimensions (models_number, model_preds, 4)
@@ -180,7 +192,7 @@ def non_maximum_weighted(boxes_list, scores_list, labels_list, weights=None, iou
 
         # Clusterize boxes
         for j in range(0, len(boxes)):
-            index, best_iou = find_matching_box(main_boxes, boxes[j], iou_thr)
+            index, best_iou = find_matching_box(main_boxes, boxes[j], iou_thr, nwd)
             if index != -1:
                 new_boxes[index].append(boxes[j].copy())
             else:

@@ -108,7 +108,7 @@ def get_weighted_box(boxes, conf_type='avg'):
     return box
 
 
-def find_matching_box_fast(boxes_list, new_box, match_iou):
+def find_matching_box_fast(boxes_list, new_box, match_iou, nwd):
     """
         Reimplementation of find_matching_box with numpy instead of loops. Gives significant speed up for larger arrays
         (~100x). This was previously the bottleneck since the function is called for every entry in the array.
@@ -130,13 +130,26 @@ def find_matching_box_fast(boxes_list, new_box, match_iou):
 
         return iou
 
+    def bb_nwd_array(boxes, new_box):
+        cx1, cy1, cx2, cy2 = (boxes[:, 0]+boxes[:, 2])/2, (boxes[:, 1]+boxes[:, 3])/2, (new_box[0]+new_box[2])/2, (new_box[1]+new_box[3])/2
+        w1, h1, w2, h2 = boxes[:, 2]-boxes[:, 0], boxes[:, 3]-boxes[:, 1], new_box[2]-new_box[0], new_box[3]-new_box[1]
+        center_distance = np.power(cx1-cx2, 2) + np.power(cy1-cy2, 2) + 1e-7
+        wh_distance = (np.power(w1-w2, 2) + np.power(h1-h2, 2)) / 4
+
+        nwd = np.exp(-np.sqrt(center_distance+wh_distance)/12.8*2000)
+
+        return nwd
+
     if boxes_list.shape[0] == 0:
         return -1, match_iou
 
     # boxes = np.array(boxes_list)
     boxes = boxes_list
 
-    ious = bb_iou_array(boxes[:, 4:], new_box[4:])
+    if not nwd:
+        ious = bb_iou_array(boxes[:, 4:], new_box[4:])
+    else:
+        ious = bb_nwd_array(boxes[:, 4:], new_box[4:])
 
     ious[boxes[:, 0] != new_box[0]] = -1
 
@@ -158,7 +171,8 @@ def weighted_boxes_fusion(
         iou_thr=0.55,
         skip_box_thr=0.0,
         conf_type='avg',
-        allows_overflow=False
+        allows_overflow=False,
+        nwd=False
 ):
     '''
     :param boxes_list: list of boxes predictions from each model, each box is 4 numbers.
@@ -204,7 +218,7 @@ def weighted_boxes_fusion(
 
         # Clusterize boxes
         for j in range(0, len(boxes)):
-            index, best_iou = find_matching_box_fast(weighted_boxes, boxes[j], iou_thr)
+            index, best_iou = find_matching_box_fast(weighted_boxes, boxes[j], iou_thr, nwd)
 
             if index != -1:
                 new_boxes[index].append(boxes[j])
